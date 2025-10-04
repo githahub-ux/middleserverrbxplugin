@@ -1,26 +1,26 @@
-se# server.py
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-import httpx
+# server.py
+from flask import Flask, request, jsonify
+import requests
 import os
-import uvicorn
 
-app = FastAPI()
+app = Flask(__name__)
 
-# CORS falls nötig
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["POST"],
-    allow_headers=["*"]
-)
-
-CEREBRAS_KEY = os.getenv("CEREBRAS_KEY")  # In Koyeb als ENV Variable setzen
+CEREBRAS_KEY = os.getenv("CEREBRAS_KEY")  # API-Key als ENV Variable
 CEREBRAS_URL = "https://api.cerebras.ai/v1/chat/completions"
 
-@app.post("/")
-async def proxy(request: Request):
-    data = await request.json()
+# --------------------
+# Health-Check Endpoint
+# --------------------
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"}), 200
+
+# --------------------
+# Proxy Endpoint
+# --------------------
+@app.route("/", methods=["POST"])
+def proxy():
+    data = request.get_json()
     prompt = data.get("prompt", "")
 
     headers = {
@@ -33,12 +33,17 @@ async def proxy(request: Request):
         "messages": [{"role": "user", "content": prompt}]
     }
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(CEREBRAS_URL, json=body, headers=headers)
+    try:
+        response = requests.post(CEREBRAS_URL, json=body, headers=headers, timeout=10)
+        response.raise_for_status()
         res_json = response.json()
+        reply = res_json.get("choices", [{}])[0].get("message", {}).get("content", "")
+        return jsonify({"reply": reply})
+    except requests.RequestException as e:
+        return jsonify({"error": str(e)}), 500
 
-    return {"reply": res_json.get("choices", [{}])[0].get("message", {}).get("content", "")}
-
-
+# --------------------
+# Server starten
+# --------------------
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=8080)
